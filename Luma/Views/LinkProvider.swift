@@ -194,19 +194,47 @@ final class AuthViewModel: ObservableObject {
 // MARK: - API Layer
 enum AuthAPI {
     struct Tokens: Decodable {
-        let refresh: String
         let access: String
+        let refresh: String
     }
 
     static func login(username: String, password: String) async throws -> Tokens {
-        let req = LoginRequest(username: username, password: password)
+        guard let supabaseURL = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_URL") as? String,
+              let supabaseAnonKey = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_ANON_KEY") as? String,
+              !supabaseURL.isEmpty,
+              !supabaseAnonKey.isEmpty else {
+            throw AuthAPIError.missingSupabaseConfiguration
+        }
 
-        return try await APIClient.shared.request(
-            path: "/api/auth/login/",
-            method: "POST",
-            body: req,
-            requiresAuth: false
-        )
+        let trimmedBaseURL = supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(trimmedBaseURL)/auth/v1/token?grant_type=password") else {
+            throw AuthAPIError.invalidSupabaseURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+
+        let body = SupabasePasswordLoginRequest(email: username, password: password)
+        request.httpBody = try JSONEncoder().encode(body)
+
+        print("🌐 Supabase Login URL:", url.absoluteString)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthAPIError.invalidResponse
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "Unknown Supabase login error"
+            throw AuthAPIError.loginFailed(statusCode: httpResponse.statusCode, message: message)
+        }
+
+        let tokens = try JSONDecoder().decode(SupabaseTokenResponse.self, from: data)
+        return Tokens(access: tokens.accessToken, refresh: tokens.refreshToken)
     }
 
     static func me() async throws -> MeResponse {
@@ -215,6 +243,42 @@ enum AuthAPI {
             method: "GET",
             requiresAuth: true
         )
+    }
+}
+
+
+private struct SupabasePasswordLoginRequest: Encodable {
+    let email: String
+    let password: String
+}
+
+private struct SupabaseTokenResponse: Decodable {
+    let accessToken: String
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+    }
+}
+
+private enum AuthAPIError: LocalizedError {
+    case missingSupabaseConfiguration
+    case invalidSupabaseURL
+    case invalidResponse
+    case loginFailed(statusCode: Int, message: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingSupabaseConfiguration:
+            return "Missing SUPABASE_URL or SUPABASE_ANON_KEY in app configuration."
+        case .invalidSupabaseURL:
+            return "Invalid Supabase URL."
+        case .invalidResponse:
+            return "Invalid authentication response."
+        case .loginFailed(let statusCode, let message):
+            return "Supabase login failed with status \(statusCode): \(message)"
+        }
     }
 }
 
