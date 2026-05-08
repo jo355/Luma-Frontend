@@ -5,7 +5,7 @@
 	<key>API_BASE_URL</key>
 	<string>http://127.0.0.1:8001</string>
 	<key>SUPABASE_ANON_KEY</key>
-	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpa3Z5b21hdHBua3R2anBrZmFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTYyNDIsImV4cCI6MjA4ODM3MjI0Mn0.xxbzxcY3MyKcJvnsQCaNYEVppFGJAGsFjXGNQqbYxdg</string>
+	<string>sb_publishable_GnDFhyeEarDMSZxZAbmOyA_MlFk3y2k</string>
 	<key>SUPABASE_URL</key>
 	<string>https://bikvyomatpnktvjpkfai.supabase.co</string>
 	<key>NSHealthShareUsageDescription</key>

@@ -63,4 +63,11 @@ final class StorageManager {
         
         return decoded
     }
+
+    func clearCurrentSession() {
+        let sessionURL = baseURL
+            .appendingPathComponent("sessions")
+            .appendingPathComponent("current_session.json")
+        try? FileManager.default.removeItem(at: sessionURL)
+    }
 }

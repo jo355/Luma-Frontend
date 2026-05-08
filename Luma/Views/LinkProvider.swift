@@ -42,7 +42,7 @@ struct AccountLinkView: View {
                     // TODO: Google sign-in（同理：拿到 Google idToken 发给后端换 JWT）
                 }
 
-                CenteredSocialButton(title: "Continue with Username",
+                CenteredSocialButton(title: "Continue with Email",
                                      icon: "person.fill",
                                      tint: .blue) {
                     showUsernameSheet = true
@@ -99,25 +99,26 @@ private struct UserLoginSheet: View {
     @ObservedObject var vm: AuthViewModel
     let onLogin: (String, String) -> Void
 
-    @State private var username = ""
+    @State private var email = ""
     @State private var password = ""
 
     var body: some View {
         NavigationView {
             Form {
                 Section("Account") {
-                    TextField("Username", text: $username)
+                    TextField("Email", text: $email)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .keyboardType(.emailAddress)
 
                     SecureField("Password", text: $password)
                 }
 
                 Section {
                     Button("Sign In") {
-                        onLogin(username, password)
+                        onLogin(email, password)
                     }
-                    .disabled(username.isEmpty || password.isEmpty || vm.isLoading)
+                    .disabled(email.isEmpty || password.isEmpty || vm.isLoading)
 
                     if vm.isLoading {
                         ProgressView("Signing in...")
@@ -131,7 +132,7 @@ private struct UserLoginSheet: View {
                     }
                 }
             }
-            .navigationTitle("Sign in with Username")
+            .navigationTitle("Sign in with Email")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { isPresented = false }
@@ -194,47 +195,50 @@ final class AuthViewModel: ObservableObject {
 // MARK: - API Layer
 enum AuthAPI {
     struct Tokens: Decodable {
-        let access: String
         let refresh: String
+        let access: String
+    }
+
+    private struct SupabasePasswordLoginRequest: Encodable {
+        let email: String
+        let password: String
+    }
+
+    private struct SupabasePasswordLoginResponse: Decodable {
+        let access_token: String
+        let refresh_token: String
     }
 
     static func login(username: String, password: String) async throws -> Tokens {
-        guard let supabaseURL = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_URL") as? String,
-              let supabaseAnonKey = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_ANON_KEY") as? String,
-              !supabaseURL.isEmpty,
-              !supabaseAnonKey.isEmpty else {
-            throw AuthAPIError.missingSupabaseConfiguration
-        }
+        // Keep the method signature unchanged to avoid touching callers.
+        let email = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let payload = SupabasePasswordLoginRequest(email: email, password: password)
 
-        let trimmedBaseURL = supabaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(trimmedBaseURL)/auth/v1/token?grant_type=password") else {
-            throw AuthAPIError.invalidSupabaseURL
+        guard let base = URL(string: SupabaseConfig.url),
+              var components = URLComponents(url: base.appendingPathComponent("auth/v1/token"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL
         }
+        components.queryItems = [URLQueryItem(name: "grant_type", value: "password")]
+        guard let url = components.url else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
-
-        let body = SupabasePasswordLoginRequest(email: username, password: password)
-        request.httpBody = try JSONEncoder().encode(body)
-
-        print("🌐 Supabase Login URL:", url.absoluteString)
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.httpBody = try JSONEncoder().encode(payload)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AuthAPIError.invalidResponse
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.http(-1, "No response")
+        }
+        if !(200...299).contains(http.statusCode) {
+            let text = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.http(http.statusCode, text)
         }
 
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown Supabase login error"
-            throw AuthAPIError.loginFailed(statusCode: httpResponse.statusCode, message: message)
-        }
-
-        let tokens = try JSONDecoder().decode(SupabaseTokenResponse.self, from: data)
-        return Tokens(access: tokens.accessToken, refresh: tokens.refreshToken)
+        let decoded = try JSONDecoder().decode(SupabasePasswordLoginResponse.self, from: data)
+        return Tokens(refresh: decoded.refresh_token, access: decoded.access_token)
     }
 
     static func me() async throws -> MeResponse {
@@ -243,42 +247,6 @@ enum AuthAPI {
             method: "GET",
             requiresAuth: true
         )
-    }
-}
-
-
-private struct SupabasePasswordLoginRequest: Encodable {
-    let email: String
-    let password: String
-}
-
-private struct SupabaseTokenResponse: Decodable {
-    let accessToken: String
-    let refreshToken: String
-
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-    }
-}
-
-private enum AuthAPIError: LocalizedError {
-    case missingSupabaseConfiguration
-    case invalidSupabaseURL
-    case invalidResponse
-    case loginFailed(statusCode: Int, message: String)
-
-    var errorDescription: String? {
-        switch self {
-        case .missingSupabaseConfiguration:
-            return "Missing SUPABASE_URL or SUPABASE_ANON_KEY in app configuration."
-        case .invalidSupabaseURL:
-            return "Invalid Supabase URL."
-        case .invalidResponse:
-            return "Invalid authentication response."
-        case .loginFailed(let statusCode, let message):
-            return "Supabase login failed with status \(statusCode): \(message)"
-        }
     }
 }
 
