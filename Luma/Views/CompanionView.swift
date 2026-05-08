@@ -169,7 +169,7 @@ struct CompanionView: View {
             SleepHealthView()
         }
         .sheet(isPresented: $showMedicalDashboard) {
-            SimpleMedicalDashboardView()
+            DashboardRedesignView()
         }
         .onAppear {
             conversations = StorageManager.shared.loadCurrentSession()

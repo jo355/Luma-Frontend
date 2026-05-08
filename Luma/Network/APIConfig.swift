@@ -8,7 +8,7 @@
 import Foundation
 
 enum APIConfig {
-    private static let fallbackBaseURL = "http://127.0.0.1:8000"
+    private static let fallbackBaseURL = "http://127.0.0.1:8001"
 
     // 模拟器和本机后端在同一台 Mac 上，直接走 127.0.0.1 最稳定。
     // 真机调试时才读取 Info.plist 中的局域网地址。
@@ -25,3 +25,4 @@ enum APIConfig {
 #endif
     }()
 }
+
