@@ -5,90 +5,52 @@
 
 import Foundation
 
-private struct HeartRateUploadRequest: Encodable {
-    let heart_rate: Double
-    let sample_time: String
+private struct UserDataRecordUploadRequest: Encodable {
+    let data_type: String
+    let content: [String: Double]
     let source: String
+    let recorded_at: String
 }
 
-private struct HRVUploadRequest: Encodable {
-    let hrv_sdnn_ms: Double
-    let sample_time: String
-    let source: String
+private struct UserDataRecordUploadResponse: Decodable {
+    let id: Int
 }
-
-private struct SleepUploadRequest: Encodable {
-    let sleep_hours: Double
-    let sample_time: String
-    let source: String
-}
-
-private struct HealthUploadResponse: Decodable {}
 
 final class HealthMetricsService {
     static let shared = HealthMetricsService()
     private init() {}
 
     func uploadHeartRate(bpm: Double, sampledAt: Date) async {
-        let formatter = ISO8601DateFormatter()
-        let payload = HeartRateUploadRequest(
-            heart_rate: bpm,
-            sample_time: formatter.string(from: sampledAt),
-            source: "apple_health_watch"
-        )
-
-        do {
-            let _: HealthUploadResponse = try await APIClient.shared.request(
-                path: "/api/health/heart-rate/",
-                method: "POST",
-                body: payload,
-                requiresAuth: true
-            )
-            print("☁️ Heart rate synced.")
-        } catch {
-            print("⚠️ Heart rate sync failed:", error.localizedDescription)
-        }
+        await uploadRecord(dataType: "heart_rate", content: ["heart_rate": bpm], sampledAt: sampledAt)
     }
 
     func uploadHRV(sdnnMs: Double, sampledAt: Date) async {
-        let formatter = ISO8601DateFormatter()
-        let payload = HRVUploadRequest(
-            hrv_sdnn_ms: sdnnMs,
-            sample_time: formatter.string(from: sampledAt),
-            source: "apple_health_watch"
-        )
-
-        do {
-            let _: HealthUploadResponse = try await APIClient.shared.request(
-                path: "/api/health/hrv/",
-                method: "POST",
-                body: payload,
-                requiresAuth: true
-            )
-            print("☁️ HRV synced.")
-        } catch {
-            print("⚠️ HRV sync failed:", error.localizedDescription)
-        }
+        await uploadRecord(dataType: "hrv", content: ["hrv_sdnn_ms": sdnnMs], sampledAt: sampledAt)
     }
 
     func uploadSleep(hours: Double, sampledAt: Date) async {
+        await uploadRecord(dataType: "sleep", content: ["sleep_hours": hours], sampledAt: sampledAt)
+    }
+
+    private func uploadRecord(dataType: String, content: [String: Double], sampledAt: Date) async {
         let formatter = ISO8601DateFormatter()
-        let payload = SleepUploadRequest(
-            sleep_hours: hours,
-            sample_time: formatter.string(from: sampledAt),
-            source: "apple_health_watch"
+        let payload = UserDataRecordUploadRequest(
+            data_type: dataType,
+            content: content,
+            source: "apple_health_watch",
+            recorded_at: formatter.string(from: sampledAt)
         )
 
         do {
-            let _: HealthUploadResponse = try await APIClient.shared.request(
-                path: "/api/health/sleep/",
+            let _: UserDataRecordUploadResponse = try await APIClient.shared.request(
+                path: "/api/data/records/",
                 method: "POST",
                 body: payload,
                 requiresAuth: true
             )
-            print("☁️ Sleep synced.")
+            print("☁️ \(dataType) synced.")
         } catch {
-            print("⚠️ Sleep sync failed:", error.localizedDescription)
+            print("⚠️ \(dataType) sync failed:", error.localizedDescription)
         }
     }
 }

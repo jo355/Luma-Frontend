@@ -20,7 +20,7 @@ struct CompanionView: View {
     @State private var conversations = Conversation.mockData
     @State private var lumaEmotion: LumaEmotion = .curious
     @State private var lumaIsThinking = false
-    @State private var showInputArea = false
+    @State private var showInputArea = true
     @State private var showConversationBubble = false
     @State private var isBouncing = false
     @State private var isDozing = false
@@ -35,6 +35,9 @@ struct CompanionView: View {
     @State private var showSettings = false
     @State private var showDigitalTwinView = false
     @State private var showDashboard = false
+    @State private var isChatFocusMode = false
+    @State private var activeRiskAlert: RiskAlertItem?
+    @State private var isAwaitingAIReply = false
     
     
     private func generateMockSummary() -> MentalHealthSummary {
@@ -71,22 +74,29 @@ struct CompanionView: View {
                 backgroundGradient
                     .ignoresSafeArea()
                 
-                // 全屏Luma角色
-                fullScreenLumaCharacter
-                
-                // 浮动对话气泡
-                if let latestConversation = conversations.last, !conversations.isEmpty {
-                    floatingConversationBubble(conversation: latestConversation)
+                if !isChatFocusMode {
+                    // 全屏Luma角色
+                    fullScreenLumaCharacter
+
+                    // 点击空白区域进入聊天专注模式
+                    blankSpaceTapLayer
                 }
+                
+                // 可滚动历史聊天（覆盖在主界面下方）
+                conversationHistoryOverlay
                 
                 // 顶部控制按钮
                 topControls
+
+                topRiskAlertOverlay
                 
                 // 底部输入区域（可隐藏）
                 bottomInputArea
                 
                 // dashboard
-                dashboardButtonBottomLeft
+                if !isChatFocusMode {
+                    dashboardButtonBottomLeft
+                }
                 
                 // 健康快照（可展开）
                 if showHealthSnapshot {
@@ -103,7 +113,7 @@ struct CompanionView: View {
             .navigationTitle("")
             .navigationBarHidden(true)
             .onTapGesture {
-                // 点击空白处隐藏输入框
+                // 点击空白处隐藏键盘
                 hideKeyboard()
             }
             .onChange(of: lumaEmotion) { newValue in
@@ -163,6 +173,10 @@ struct CompanionView: View {
         }
         .onAppear {
             conversations = StorageManager.shared.loadCurrentSession()
+            showInputArea = true
+            Task {
+                await refreshRiskAlertState()
+            }
         }
     }
     
@@ -267,9 +281,25 @@ struct CompanionView: View {
                         )
                 }
                 
-                Button("Summary") {
-                    let summary = generateMockSummary()
-                    print(summary)
+                if isChatFocusMode {
+                    Button("Done") {
+                        withAnimation(.easeInOut) {
+                            isChatFocusMode = false
+                        }
+                    }
+                }
+
+                Button {
+                    Task { await startNewConversation() }
+                } label: {
+                    Image(systemName: "plus.bubble.fill")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.9))
+                        )
                 }
                 
                 Button(action: {
@@ -333,6 +363,18 @@ struct CompanionView: View {
             Spacer()
         }
     }
+
+    private var blankSpaceTapLayer: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    // 空白/Luma 区域点击：触发角色动态交互，不切换到聊天专注模式。
+                    cycleLumaEmotion()
+                    showInputArea = true
+                }
+            }
+    }
     
     private var dashboardButtonBottomLeft: some View {
         VStack {
@@ -358,23 +400,97 @@ struct CompanionView: View {
             }
         }
     }
+
+    // MARK: - 历史聊天区（可滚动）
+    private var conversationHistoryOverlay: some View {
+        Group {
+            if isChatFocusMode {
+                VStack {
+                    conversationArea
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.top, 88)
+                        .padding(.bottom, 116)
+                }
+            } else {
+                VStack {
+                    Spacer()
+                    conversationArea
+                        .frame(maxHeight: 280)
+                        .onTapGesture {
+                            withAnimation(.easeInOut) {
+                                // 点击对话内容进入展开模式，查看更长历史记录。
+                                isChatFocusMode = true
+                                showInputArea = true
+                            }
+                        }
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 160)
+                }
+            }
+        }
+    }
     
     // MARK: - 对话区域
     private var conversationArea: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                // 欢迎消息
-                if conversations.isEmpty {
-                    welcomeMessage
-                } else {
-                    // 对话记录
-                    ForEach(conversations) { conversation in
-                        ConversationBubbleSimple(conversation: conversation)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    // 欢迎消息
+                    if conversations.isEmpty {
+                        welcomeMessage
+                    } else {
+                        // 对话记录
+                        ForEach(conversations) { conversation in
+                            ConversationBubbleSimple(conversation: conversation)
+                                .id(conversation.id)
+                        }
                     }
+                    
+                    if isAwaitingAIReply {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.9)
+                            Text("Luma is replying...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .id("typing-indicator")
+                    }
+                    
+                    Color.clear
+                        .frame(height: 1)
+                        .id("conversation-bottom")
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .onChange(of: conversations.count) { _ in
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("conversation-bottom", anchor: .bottom)
                 }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+            .onChange(of: isAwaitingAIReply) { _ in
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("conversation-bottom", anchor: .bottom)
+                }
+            }
+            .onAppear {
+                proxy.scrollTo("conversation-bottom", anchor: .bottom)
+            }
         }
         .background(Color(.systemBackground))
     }
@@ -436,9 +552,7 @@ struct CompanionView: View {
             TextField("Have a chat with Luma...", text: $userInput, axis: .vertical)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .lineLimit(1...3)
-                .onSubmit {
-                    sendMessage()
-                }
+                // 不用回车直接发送，避免中文输入法候选未确认时误发。
             
             // 语音输入按钮
             Button(action: toggleVoiceInput) {
@@ -518,6 +632,52 @@ struct CompanionView: View {
             endPoint: .bottomTrailing
         )
     }
+
+    private func riskAlertBanner(alert: RiskAlertItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(alert.riskLevel.uppercased() == "HIGH" ? "Safety Alert" : "Wellness Alert")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button {
+                    activeRiskAlert = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(alert.alertMessage)
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let firstAction = alert.recommendedActions.first {
+                Text("Suggestion: \(firstAction)")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.95))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .foregroundColor(.white)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(alert.riskLevel.lowercased() == "high" ? Color.red.opacity(0.92) : Color.orange.opacity(0.9))
+        )
+    }
+
+    private var topRiskAlertOverlay: some View {
+        VStack {
+            if let alert = activeRiskAlert {
+                riskAlertBanner(alert: alert)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 76)
+            }
+            Spacer()
+        }
+        .zIndex(50)
+    }
     
     // MARK: - 方法
     private func sendMessage() {
@@ -541,6 +701,7 @@ struct CompanionView: View {
         userInput = ""
         
         // invoke AI model
+        isAwaitingAIReply = true
         Task {
             do {
                 let reply = try await fetchAIReply(message: userMessage.message)
@@ -556,9 +717,22 @@ struct CompanionView: View {
                     StorageManager.shared.saveMessage(aiMessage)
                 }
                 await ChatService.shared.upload(conversation: aiMessage)
+                await refreshRiskAlertState()
 
             } catch {
                 print("❌ AI error:", error)
+                let fallback = Conversation(
+                    message: "I could not fetch a reply right now. Please check your network or backend server and try again.",
+                    isFromUser: false,
+                    timestamp: Date()
+                )
+                await MainActor.run {
+                    conversations.append(fallback)
+                    StorageManager.shared.saveMessage(fallback)
+                }
+            }
+            await MainActor.run {
+                isAwaitingAIReply = false
             }
         }
         
@@ -616,6 +790,57 @@ struct CompanionView: View {
         )
 
         return response.reply
+    }
+
+    private func refreshRiskAlertState() async {
+        do {
+            let response: RiskAlertListResponse = try await APIClient.shared.request(
+                path: "/api/alerts/risk/?limit=1",
+                method: "GET",
+                requiresAuth: true
+            )
+            let latest = response.alerts.first
+            let shouldShow = latest?.riskLevel.lowercased() == "high" || latest?.riskLevel.lowercased() == "medium"
+            await MainActor.run {
+                activeRiskAlert = shouldShow ? latest : nil
+                applySafetyInteraction(for: shouldShow ? latest : nil)
+            }
+        } catch {
+            await MainActor.run {
+                activeRiskAlert = nil
+                applySafetyInteraction(for: nil)
+            }
+        }
+    }
+
+    private func startNewConversation() async {
+        do {
+            let _: NewChatSessionResponse = try await APIClient.shared.request(
+                path: "/api/chat/new-session/",
+                method: "POST",
+                body: Optional<Int>.none,
+                requiresAuth: true
+            )
+            await MainActor.run {
+                StorageManager.shared.clearCurrentSession()
+                conversations = []
+                activeRiskAlert = nil
+                isAwaitingAIReply = false
+                showInputArea = true
+                isChatFocusMode = false
+                applySafetyInteraction(for: nil)
+            }
+        } catch {
+            let fallback = Conversation(
+                message: "Could not start a new session right now. Please try again.",
+                isFromUser: false,
+                timestamp: Date()
+            )
+            await MainActor.run {
+                conversations.append(fallback)
+                StorageManager.shared.saveMessage(fallback)
+            }
+        }
     }
     
     private func toggleVoiceInput() {
@@ -830,6 +1055,7 @@ struct CompanionView: View {
                 )
                 .padding(.horizontal)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, isChatFocusMode ? 8 : 48)
             }
         }
     }
@@ -915,14 +1141,14 @@ struct CompanionView: View {
                 Capsule()
                     .fill(Color.white)
                     .frame(width: 30, height: 80)
-                    .rotationEffect(.degrees(armsUp ? (armWave ? -50 : -70) : 15)) // Happy举手+摆动，平时自然垂放
+                    .rotationEffect(.degrees(armsUp ? (armWave ? -50 : -70) : 15))
                     .offset(x: armsUp ? -15 : 0, y: armsUp ? -30 : 10)
                 
                 // 右臂
                 Capsule()
                     .fill(Color.white)
                     .frame(width: 30, height: 80)
-                    .rotationEffect(.degrees(armsUp ? (armWave ? 50 : 70) : -15)) // Happy举手+摆动，平时自然垂放
+                    .rotationEffect(.degrees(armsUp ? (armWave ? 50 : 70) : -15))
                     .offset(x: armsUp ? 15 : 0, y: armsUp ? -30 : 10)
             }
             .offset(y: -40) // 手臂位置调整
@@ -963,12 +1189,12 @@ struct CompanionView: View {
     
     private var largeScaleLumaEye: some View {
         ZStack {
-            if lumaEmotion == .happy {
-                EyeArc(smileUp: true)
+            if lumaEmotion == .sad {
+                EyeArc(smileUp: false)
                     .stroke(Color.black, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .frame(width: 40, height: 24)
-            } else if lumaEmotion == .sad {
-                EyeArc(smileUp: false)
+            } else if lumaEmotion == .happy {
+                EyeArc(smileUp: true)
                     .stroke(Color.black, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .frame(width: 40, height: 24)
             } else if lumaEmotion == .tired {
@@ -1136,6 +1362,10 @@ struct CompanionView: View {
     
     private func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func applySafetyInteraction(for alert: RiskAlertItem?) {
+        _ = alert
     }
     
     

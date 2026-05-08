@@ -10,13 +10,7 @@ import Foundation
 
 final class AuthService {
     func login(username: String, password: String) async throws {
-        let req = LoginRequest(username: username, password: password)
-        let tokens: TokenResponse = try await APIClient.shared.request(
-            path: "/api/auth/login/",
-            method: "POST",
-            body: req,
-            requiresAuth: false
-        )
+        let tokens = try await AuthAPI.login(username: username, password: password)
         TokenStore.shared.save(access: tokens.access, refresh: tokens.refresh)
     }
 

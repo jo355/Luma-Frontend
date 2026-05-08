@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>API_BASE_URL</key>
-	<string>http://192.168.89.10:8001</string>
+	<string>http://192.168.89.10:8000</string>
 	<key>SUPABASE_ANON_KEY</key>
-	<string>your_supabase_anon_key</string>
+	<string>sb_publishable_GnDFhyeEarDMSZxZAbmOyA_MlFk3y2k</string>
 	<key>SUPABASE_URL</key>
 	<string>https://bikvyomatpnktvjpkfai.supabase.co</string>
 	<key>NSHealthShareUsageDescription</key>
